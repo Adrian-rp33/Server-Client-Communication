@@ -10,10 +10,11 @@ using System.IO;
 
 namespace Cliente_Servidor
 {
-    public class Servidor
+    public class Server
     {
         private static string IP = GetLocalIPAddress();
         private static string PORT = "8080";
+        private static bool closingServer = false;
         private static TcpListener server = null;
         private static List<Session> _clients = new List<Session>();
 
@@ -22,8 +23,9 @@ namespace Cliente_Servidor
             StartServer();
         }
 
-        public static void StartServer()
+        public static async void StartServer()
         {
+            Thread writeThread = null;
             try
             {
                 IPAddress localAddr = IPAddress.Parse(IP);
@@ -32,39 +34,44 @@ namespace Cliente_Servidor
                 server = new TcpListener(localAddr, port);
                 server.Start();
 
-                Console.WriteLine($"¡Servidor iniciado! ahora puede usar los comandos de servidor, para saber mas usa /help.\n" +
-                    $"El servidor se ha iniciado con dirección {IP} y en el puerto {PORT}");
+                Console.WriteLine($"Server initialized! now you can use server commands, to know more type /help.\n" +
+                    $"Server initialized with address {IP} port {PORT}");
 
-                Thread writeThread = new Thread(WriteResponse);
+                writeThread = new Thread(WriteResponse);
+                writeThread.Start();
 
-                while (true)
+                while (!closingServer)
                 {
-                    Console.Write($"Esperando conexión... (Dirección IP {IP})");
-                    var client = server.AcceptTcpClient();
-                    NetworkStream stream = client.GetStream();
-                    string newClientName = ReadStringFromStream(stream);
-
-                    lock (_clients)
+                    var clientTask = server.AcceptTcpClientAsync();
+                    if (await Task.WhenAny(clientTask, Task.Delay(1000)) == clientTask)
                     {
-                        _clients.Add(new Session(client, newClientName));
+                        var client = clientTask.Result;
+                        string newClientName = ReadStringFromStream(client.GetStream());
+
+                        lock (_clients)
+                        {
+                            _clients.Add(new Session(client, newClientName));
+                        }
+                        Console.WriteLine("Client connected!");
                     }
-                    Console.WriteLine("¡Cliente conectado!");
+
                 }
             }
             catch (SocketException)
             {
-                Console.WriteLine("Servidor cerrado.");
+                Console.WriteLine("Server closed.");
             }
             finally
             {
+                if(writeThread != null)
+                    writeThread.Join();
                 server.Stop();
             }
         }
 
         /// <summary>
-        /// Introducir comandos en el servidor
+        /// Writing thread for server commands
         /// </summary>
-        /// <param name="_writer"></param>
         private static void WriteResponse()
         {
             while (true)
@@ -87,7 +94,7 @@ namespace Cliente_Servidor
                             }
                             else
                             {
-                                Console.WriteLine("Uso: /kick <indice del cliente>");
+                                Console.WriteLine("Use: /kick <client index>");
                             }
                         }
                         else if (message.StartsWith("/msg"))
@@ -101,21 +108,41 @@ namespace Cliente_Servidor
                         }
                         else if (message == "/close")
                         {
+                            Console.WriteLine("Server is closing, all clients will be disconnected.");
                             DisconnectAll();
-                            server.Stop();
+                            closingServer = true;
                         }
                         else
                         {
-                            Console.WriteLine("Comando desconocido, para ver la lista de comandos utilice /help.");
+                            Console.WriteLine("Command unknown, to list all commands available type /help.");
                         }
                     }
                 }
                 catch (IOException e)
                 {
-                    Console.WriteLine($"Ha surgido un error: {e}");
+                    Console.WriteLine($"An error has occurred: {e}");
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Checks if the name passed is taken or not
+        /// </summary>
+        /// <param name="name"></param>
+        /// <returns></returns>
+        private static bool isNameTaken(string name)
+        {
+            lock (_clients) 
+            {
+                for (int i = 0; i < _clients.Count; i++) 
+                {
+                    if (_clients[i]._name == name)
+                        return true;
+                    
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -127,21 +154,21 @@ namespace Cliente_Servidor
             {
                 if (_clients.Count > 0)
                 {
-                    Console.WriteLine("Clientes Conectados:     Nombre          Dirección");
+                    Console.WriteLine("Clients connected (Name & EndPoint):");
                     for (int i = 0; i < _clients.Count; i++)
                     {
-                        Console.WriteLine($"Cliente {i + 1}:      {_clients[i]._name} {_clients[i]._session.Client.RemoteEndPoint}");
+                        Console.WriteLine($"Client {i + 1}:      {_clients[i]._name} | {_clients[i]._session.Client.RemoteEndPoint}");
                     }
                 }
                 else
-                    Console.Write("No hay clientes conectados");
+                    Console.WriteLine("There are no clients connected.");
             }
         }
 
         /// <summary>
-        /// Mostrar solo los nombre d
+        /// List and send all clients connected to the client that requested it
         /// </summary>
-        private static void ListAndSendClients(TcpClient sessionRequest)
+        private static void ListAndSendClients(Session sessionRequest)
         {
             string? aux = "";
             lock (_clients)
@@ -150,12 +177,12 @@ namespace Cliente_Servidor
                 {
                     aux += ($"{_clients[i]._name} \n");
                 }
-                sessionRequest.GetStream().Write(Encoding.ASCII.GetBytes(aux)); //Enviar lista de clientes
+                sessionRequest._session.GetStream().Write(Encoding.ASCII.GetBytes(aux)); // Finally send the string which contains all clients
             }
         }
 
         /// <summary>
-        /// Enviar mensaje del servidor a todos los clientes
+        /// Send a message to all clients
         /// </summary>
         /// <param name="message"></param>
         private static void WriteAllClients(string message)
@@ -164,13 +191,13 @@ namespace Cliente_Servidor
             {
                 foreach (Session s in _clients)
                 {
-                    s._session.GetStream().Write(Encoding.ASCII.GetBytes(message));
+                    s._session.GetStream().Write(Encoding.ASCII.GetBytes($"Servidor: {message}"));
                 }
             }
         }
 
         /// <summary>
-        /// Desconectar todos los clientes y limpiar la lista de clientes
+        /// Disconnect and clear all clients
         /// </summary>
         private static void DisconnectAll()
         {
@@ -178,7 +205,7 @@ namespace Cliente_Servidor
             {
                 for (int i = 0; i < _clients.Count; i++)
                 {
-                    _clients[i]._session.GetStream().Write(Encoding.ASCII.GetBytes("Se ha cerrado el servidor, por lo que seras expulsado."));
+                    _clients[i]._session.GetStream().Write(Encoding.ASCII.GetBytes("Server has been closed, all clients has been disconnected."));
                     _clients[i]._session.Close();
                 }
                 _clients.Clear();
@@ -186,53 +213,42 @@ namespace Cliente_Servidor
         }
 
         /// <summary>
-        /// Desconectar cliente
+        /// Kick client
         /// </summary>
         /// <param name="clientIndex"></param>
-        /// <param name="writer"></param>
         private static void DisconnectClient(int clientIndex)
         {
             clientIndex--;
             lock (_clients)
             {
-                if (clientIndex >= 0 && clientIndex < _clients.Count)
+                if (clientIndex > 0 && clientIndex < _clients.Count)
                 {
                     TcpClient aux = _clients[clientIndex]._session;
                     aux.Close();
                     _clients.RemoveAt(clientIndex);
-                    aux.GetStream().Write(Encoding.ASCII.GetBytes("Has sido expulsado del servidor."));
-                    Console.WriteLine($"Cliente {clientIndex + 1} desconectado.");
+                    aux.GetStream().Write(Encoding.ASCII.GetBytes("You have been kicked out of the server."));
+                    Console.WriteLine($"Client {clientIndex + 1} kicked.");
                 }
                 else
-                    Console.WriteLine("Error, índice de cliente invalido");
+                    Console.WriteLine("Error, index out of bounds.");
             }
         }
 
         /// <summary>
-        /// Desconectar cliente, usado cuando el cliente tiene un error
+        /// Disconnect and remove a client from the list
         /// </summary>
-        /// <param name="clientDisc"></param>
-        private static void DisconnectClient(TcpClient clientDisc)
+        /// <param name="clientToDisconnect"></param>
+        private static void DisconnectClient(Session clientToDisconnect) 
         {
-            lock (_clients)
+            lock (_clients) 
             {
-                int aux = -1;
-                for (int i = 0; i < _clients.Count; i++)
-                {
-                    if (_clients[i]._session == clientDisc)
-                        aux = i;
-                }
-                if (aux != -1)
-                {
-                    Console.WriteLine($"{_clients[aux].ToString()} se ha desconectado.");
-                    _clients.RemoveAt(aux);
-                }
-
+                _clients.Remove(clientToDisconnect);
+                clientToDisconnect._session.Close();
             }
         }
 
         /// <summary>
-        /// Listar ayuda de comandos
+        /// Help, list all commands available
         /// </summary>
         private static void Help()
         {
@@ -244,7 +260,7 @@ namespace Cliente_Servidor
         }
 
         /// <summary>
-        /// Recoger IP local para iniciar el servidor
+        /// Get local address to initialize server
         /// </summary>
         /// <returns></returns>
         /// <exception cref="Exception"></exception>
@@ -258,31 +274,12 @@ namespace Cliente_Servidor
                     return ip.ToString();
                 }
             }
-            throw new Exception("Error, no se puede crear servidor en este dispositivo " +
-                "no existen adaptadores con direccion IPv4 en el sistema.");
+            throw new Exception("Error, is not possible to create a server in this device " +
+                "there are no IPv4 adapters within the system.");
         }
 
         /// <summary>
-        /// Busca un cliente usando su EndPoint
-        /// </summary>
-        /// <param name="clientEndPoint"></param>
-        /// <returns></returns>
-        private static TcpClient? SearchFromClientsList(string clientEndPoint)
-        {
-            lock (_clients) 
-            {
-                foreach (Session s in _clients)
-                {
-                    string aux = s._session.Client.RemoteEndPoint.ToString();
-                    if (aux == clientEndPoint)
-                        return s._session;
-                }
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// Busca un cliente por nombre
+        /// search for a client by its name
         /// </summary>
         /// <param name="clientName"></param>
         /// <returns></returns>
@@ -300,28 +297,28 @@ namespace Cliente_Servidor
         }
 
         /// <summary>
-        /// Comunicacion entre clientes
+        /// Communitacion between clients
         /// </summary>
         /// <param name="textRecieved"></param>
-        private static void SendMessageClientToClient(string textRecieved) 
+        private static void SendMessageClientToClient(Session sender, string textRecieved)
         {
-            //estructura --> <comando> <destinatario> <remitente> <mensaje>
+            //message --> <command> <target client> <message>
+            //target client sees --> <sender>: <message>
             var request = SearchFromClientsListByName(textRecieved.Split(' ')[1]);
             if (request != null)
             {
-                string messageToSend = textRecieved.Substring(textRecieved.IndexOf(' ', textRecieved.IndexOf(' ') + 1) + 1);
+                string messageToSend = $"{sender._name}: {textRecieved.Substring(textRecieved.IndexOf(' ', textRecieved.IndexOf(' ') + 1)) + 1}";
                 request.GetStream().Write(Encoding.ASCII.GetBytes(messageToSend));
             }
             else
             {
-                var sender = SearchFromClientsListByName(textRecieved.Split(new char[] {' ', ':' }, StringSplitOptions.RemoveEmptyEntries)[2]);
-                sender.GetStream().Write(Encoding.ASCII.GetBytes("El cliente con quien intenta comunicarse no existe," +
-                    "utilice el comando /list para ver que clientes estan conectados."));
+                sender._session.GetStream().Write(Encoding.ASCII.GetBytes("You are trying to send a message to a client that is not connected or doesn't exist," +
+                    "type /list to see which clients are connected."));
             }
         }
 
         /// <summary>
-        /// Retorna la cadena de caracteres que haya llegado al servidor
+        /// returns a string from stream
         /// </summary>
         /// <param name="stream"></param>
         /// <returns></returns>
@@ -332,6 +329,9 @@ namespace Cliente_Servidor
             return Encoding.ASCII.GetString(buffer, 0, bytesRead);
         }
 
+        /// <summary>
+        /// Internal class to manage sessions
+        /// </summary>
         internal class Session
         {
             public TcpClient _session;
@@ -343,38 +343,54 @@ namespace Cliente_Servidor
                 _session = session;
                 _name = name;
                 _readThread = new Thread(new ParameterizedThreadStart(ReadResponse));
-                _readThread.Start(_session.GetStream());
+                _readThread.Start(this); // Send this session as an object
 
             }
 
-            private static void ReadResponse(object _reader)
+            /// <summary>
+            /// Thread to read responses from clients
+            /// </summary>
+            /// <param name="sessionObj"></param>
+            private static void ReadResponse(object sessionObj)
             {
+                Session sessionInstance = (Session)sessionObj; // Since it's a static method, we need to cast the object to a Session object
+                var _reader = sessionInstance._session.GetStream();
                 while (true)
                 {
                     try
                     {
-                        string response = ReadStringFromStream(_reader as NetworkStream);
+                        string response = ReadStringFromStream(_reader);
 
-                        if (response.StartsWith("/SendMessageToThisClient"))
+                        if (response.StartsWith("/SendMessageToThisClient")) // Send messages between clients
                         {
-                            SendMessageClientToClient(response);
+                            SendMessageClientToClient(sessionInstance, response);
                         }
-                        else if (response.StartsWith("/list"))
+                        else if (response.StartsWith("/list")) // List and send clients
                         {
-                            var request = SearchFromClientsList(response.Split(' ')[1]);
-                            ListAndSendClients(request);
+                            ListAndSendClients(sessionInstance);
                         }
-                        else if (response.StartsWith("/exit"))
+                        else if (response.StartsWith("/exit")) // Client disconnecting
                         {
-                            var clientToExit = SearchFromClientsList(response.Split()[1]);
-                            DisconnectClient(clientToExit);
+                            DisconnectClient(sessionInstance);
+                        }
+                        else if (response.StartsWith("/isNameTaken")) 
+                        { 
+                            string nameToCheck = response.Substring(response.IndexOf(' ') + 1);
+                            if (isNameTaken(nameToCheck))
+                                sessionInstance._session.GetStream().Write(Encoding.ASCII.GetBytes("true"));
+                            else
+                                sessionInstance._session.GetStream().Write(Encoding.ASCII.GetBytes("false"));
                         }
 
                     }
                     catch (IOException)
                     {
-                        Console.WriteLine("Error al leer la respuesta del cliente.");
+                        Console.WriteLine("Unable to read client response.");
                         break;
+                    }
+                    finally 
+                    {
+                        sessionInstance._readThread.Join();
                     }
                 }
             }
