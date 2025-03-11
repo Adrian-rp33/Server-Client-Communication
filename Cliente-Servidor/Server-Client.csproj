@@ -3,10 +3,10 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
-    <RootNamespace>Cliente_Servidor</RootNamespace>
+    <RootNamespace>Server-Client</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <StartupObject>Cliente_Servidor.Client</StartupObject>
+    <StartupObject>Cliente_Servidor.Server</StartupObject>
   </PropertyGroup>
 
 </Project>
