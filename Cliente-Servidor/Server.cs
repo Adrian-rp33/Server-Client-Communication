@@ -46,11 +46,10 @@ namespace Cliente_Servidor
                     if (await Task.WhenAny(clientTask, Task.Delay(1000)) == clientTask)
                     {
                         var client = clientTask.Result;
-                        string newClientName = ReadStringFromStream(client.GetStream());
 
                         lock (_clients)
                         {
-                            _clients.Add(new Session(client, newClientName));
+                            _clients.Add(new Session(client, null)); // Name null, will be set later on by the same client
                         }
                         Console.WriteLine("Client connected!");
                     }
@@ -373,13 +372,17 @@ namespace Cliente_Servidor
                         {
                             DisconnectClient(sessionInstance);
                         }
-                        else if (response.StartsWith("/isNameTaken")) 
-                        { 
+                        else if (response.StartsWith("/isNameTaken"))
+                        {
                             string nameToCheck = response.Substring(response.IndexOf(' ') + 1);
                             if (isNameTaken(nameToCheck))
                                 sessionInstance._session.GetStream().Write(Encoding.ASCII.GetBytes("true"));
                             else
                                 sessionInstance._session.GetStream().Write(Encoding.ASCII.GetBytes("false"));
+                        }
+                        else if (response.StartsWith("/setName")) 
+                        { 
+                            sessionInstance._name = response.Substring(response.IndexOf(' ') + 1);
                         }
 
                     }

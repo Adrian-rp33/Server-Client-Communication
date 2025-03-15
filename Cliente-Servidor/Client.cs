@@ -65,6 +65,8 @@ namespace Cliente_Servidor
 
                 } while (String.IsNullOrEmpty(clientName));
 
+                writer.Write($"/setName {clientName}");
+
                 Console.WriteLine("Access granted to server! To exit type '/exit' \n" +
                     "Send messages using /msg <target client> <message>. \n" +
                     "To list clients connected use /list");
