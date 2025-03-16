@@ -251,11 +251,11 @@ namespace Cliente_Servidor
         /// </summary>
         private static void Help()
         {
-            Console.WriteLine("Comandos disponibles:\n" +
-                "/list - Listar clientes conectados.\n" +
-                "/kick <indice> - Desconectar cliente.\n" +
-                "/msg <mensaje> - Enviar mensaje a todos los clientes.\n" +
-                "/close - Cerrar servidor.");
+            Console.WriteLine("Available commands:\n" +
+                "/list - List clients connected.\n" +
+                "/kick <index> - kick client.\n" +
+                "/msg <message> - Send message to all clients.\n" +
+                "/close - close server (disconnects all clients and then close connection).");
         }
 
         /// <summary>
